@@ -29,6 +29,7 @@ class VisionNetwork(TFModelV2):
         self.last_layer_is_flattened = False
 
         # Build the action layers
+        i = -1  # in case of 1-element filters
         for i, (out_size, kernel, stride) in enumerate(filters[:-1], 1):
             last_layer = tf.keras.layers.Conv2D(
                 out_size,
@@ -93,6 +94,7 @@ class VisionNetwork(TFModelV2):
         else:
             # build a parallel set of hidden layers for the value net
             last_layer = inputs
+            i = -1  # in case of 1-element filters
             for i, (out_size, kernel, stride) in enumerate(filters[:-1], 1):
                 last_layer = tf.keras.layers.Conv2D(
                     out_size,
