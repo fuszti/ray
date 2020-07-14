@@ -41,20 +41,16 @@ class VisionNetwork(TFModelV2):
                 name="conv{}".format(i))(last_layer)
 
         out_size, kernel, stride = filters[-1]
-
-        # No final linear: Last layer is a Conv2D and uses num_outputs.
-        if no_final_linear and num_outputs:
-            last_layer = tf.keras.layers.Conv2D(
-                num_outputs,
-                kernel,
-                strides=(stride, stride),
-                activation=activation,
-                padding="valid",
-                data_format="channels_last",
-                name="conv_out")(last_layer)
-            conv_out = last_layer
-        # Finish network normally (w/o overriding last layer size with
-        # `num_outputs`), then add another linear one of size `num_outputs`.
+        
+        if no_final_linear:
+            if num_outputs:
+                # TODO check the dimensions
+                raise ValueError(f"The last convolution layer size is "
+                                 f"different to num_outputs={num_outputs}.")
+            else:
+                self.last_layer_is_flattened = True
+                conv_out = tf.keras.layers.Flatten(
+                    data_format="channels_last")(last_layer)
         else:
             last_layer = tf.keras.layers.Conv2D(
                 out_size,
@@ -64,28 +60,22 @@ class VisionNetwork(TFModelV2):
                 padding="valid",
                 data_format="channels_last",
                 name="conv{}".format(i + 1))(last_layer)
-
-            # num_outputs defined. Use that to create an exact
-            # `num_output`-sized (1,1)-Conv2D.
+            self.last_layer_is_flattened = True
+            conv_out = tf.keras.layers.Flatten(
+                data_format="channels_last")(last_layer)
             if num_outputs:
-                conv_out = tf.keras.layers.Conv2D(
-                    num_outputs, [1, 1],
-                    activation=None,
-                    padding="same",
-                    data_format="channels_last",
-                    name="conv_out")(last_layer)
-            # num_outputs not known -> Flatten, then set self.num_outputs
-            # to the resulting number of nodes.
+                final_layer_size = num_outputs
             else:
-                self.last_layer_is_flattened = True
-                conv_out = tf.keras.layers.Flatten(
-                    data_format="channels_last")(last_layer)
-                self.num_outputs = conv_out.shape[1]
-
+                final_layer_size = conv_out.shape[1]
+            conv_out = tf.keras.layers.Dense(
+                final_layer_size,
+                name="conv_out",
+                activation=activation,
+                kernel_initializer=normc_initializer(0.01))(last_layer)
         # Build the value layers
         if vf_share_layers:
-            last_layer = tf.keras.layers.Lambda(
-                lambda x: tf.squeeze(x, axis=[1, 2]))(last_layer)
+            value_out = tf.keras.layers.Flatten(
+                data_format="channels_last")(last_layer)
             value_out = tf.keras.layers.Dense(
                 1,
                 name="value_out",
@@ -113,14 +103,20 @@ class VisionNetwork(TFModelV2):
                 padding="valid",
                 data_format="channels_last",
                 name="conv_value_{}".format(i + 1))(last_layer)
+            # TODO review is it needed (makes less parameters)
             last_layer = tf.keras.layers.Conv2D(
                 1, [1, 1],
                 activation=None,
                 padding="same",
                 data_format="channels_last",
                 name="conv_value_out")(last_layer)
-            value_out = tf.keras.layers.Lambda(
-                lambda x: tf.squeeze(x, axis=[1, 2]))(last_layer)
+            value_out = tf.keras.layers.Flatten(
+                data_format="channels_last")(last_layer)
+            value_out = tf.keras.layers.Dense(
+                1,
+                name="value_out",
+                activation=None,
+                kernel_initializer=normc_initializer(0.01))(last_layer)
 
         self.base_model = tf.keras.Model(inputs, [conv_out, value_out])
         self.register_variables(self.base_model.variables)
@@ -133,7 +129,7 @@ class VisionNetwork(TFModelV2):
         if self.last_layer_is_flattened:
             return model_out, state
         # Last layer is a n x [1,1] Conv2D -> Flatten.
-        else:
+        else: # TODO delete me
             return tf.squeeze(model_out, axis=[1, 2]), state
 
     def value_function(self):
